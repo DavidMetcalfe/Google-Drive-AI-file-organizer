@@ -274,8 +274,8 @@ function scanFolderAndProcessFiles() {
 function _organizeFile(file, folderListString) {
   const fileId = file.getId();
   try {
-    // Check file size to avoid memory issues
-    const MAX_FILE_SIZE_MB = 15; // Adjust based on your needs
+    // Check file size to avoid memory issues with Apps Script and API limits
+    const MAX_FILE_SIZE_MB = 18; // Close to Gemini's 20MB inline data limit
     const fileSize = file.getSize();
     if (fileSize > MAX_FILE_SIZE_MB * 1024 * 1024) {
       Logger.log(`File ${file.getName()} is too large (${Math.round(fileSize/1024/1024)}MB). Skipping.`);
