@@ -8,6 +8,7 @@ A powerful Google Apps Script that automatically organizes files in your Google 
 
 - **AI-Powered Organization**: Uses Gemini 2.5 Flash Lite to understand file content and suggest optimal organization
 - **Smart Folder Structure**: Intelligently renames files and moves them to appropriate folders
+- **Optimized File Handling**: Processes files up to 18MB with efficient inline processing
 - **Scalable Architecture**: Works with any size Google Drive through stateful processing and chained execution
 - **Configurable Workflows**: Customizable settings for processing frequency, batch sizes, and folder refresh intervals
 - **Robust Error Handling**: Built-in protections against file size limits, API errors, and concurrent execution issues
@@ -63,6 +64,9 @@ const BATCH_SIZE = 5;                          // Files processed per run
 const MAX_RUNTIME_SECONDS = 240;               // Seconds before chaining folder scan
 const FOLDER_CACHE_REFRESH_HOURS = 24;         // How often to refresh folder structure
 
+// --- File Size Configuration ---
+const MAX_FILE_SIZE_MB = 18;                   // Maximum file size for processing
+
 // --- API Configuration ---
 const GEMINI_API_KEY = "PASTE_YOUR_GEMINI_API_KEY_HERE"; // Your Gemini API key
 ```
@@ -104,7 +108,16 @@ You can set longer intervals for folder structure rescanning by adjusting the `F
 
 ### File Size Limits
 
-The script automatically skips files over 15MB to avoid memory issues. You can adjust this limit by changing the `MAX_FILE_SIZE_MB` variable in the `_organizeFile` function.
+The script processes files up to 18MB in size, which approaches Gemini's 20MB inline data limit while providing a safety margin for encoding overhead.
+
+You can adjust this limit by modifying the following constant:
+
+```javascript
+// --- File Size Configuration ---
+const MAX_FILE_SIZE_MB = 18;                  // Maximum file size in MB
+```
+
+Files larger than this limit will be skipped with an appropriate log message.
 
 ### Smart Path Validation
 

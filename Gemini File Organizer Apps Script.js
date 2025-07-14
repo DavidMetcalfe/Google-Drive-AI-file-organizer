@@ -45,6 +45,9 @@ const BATCH_SIZE = 5; // Process up to 5 files per run to avoid timeouts.
 const MAX_RUNTIME_SECONDS = 240; // Run for 4 minutes before chaining to the next execution.
 const FOLDER_CACHE_REFRESH_HOURS = 24; // How often to rescan the entire folder structure.
 
+// --- File Size Configuration ---
+const MAX_FILE_SIZE_MB = 18; // Maximum size for files (limit of Gemini's API with inline content) over the inline limit
+
 // --- API Configuration ---
 const GEMINI_API_KEY = "PASTE_YOUR_GEMINI_API_KEY_HERE"; // Your Gemini API key
 
@@ -271,14 +274,24 @@ function scanFolderAndProcessFiles() {
  * -----------------------------------------------------------------------------
  */
 
+/**
+ * Organizes a file using Gemini AI to suggest a better filename and destination folder.
+ * Supports two methods based on file size:
+ * 1. Inline base64 content for files under INLINE_FILE_SIZE_LIMIT_MB (faster)
+ * 2. Gemini Files API for larger files up to MAX_FILE_SIZE_LIMIT_MB
+ * 
+ * @param {File} file - The Google Drive file to organize
+ * @param {string} folderListString - JSON string of available folders
+ */
 function _organizeFile(file, folderListString) {
   const fileId = file.getId();
   try {
-    // Check file size to avoid memory issues with Apps Script and API limits
-    const MAX_FILE_SIZE_MB = 18; // Close to Gemini's 20MB inline data limit
+    // Check file size against maximum limit
     const fileSize = file.getSize();
+    const fileSizeMB = Math.round(fileSize/1024/1024 * 10) / 10; // Round to 1 decimal place
+    
     if (fileSize > MAX_FILE_SIZE_MB * 1024 * 1024) {
-      Logger.log(`File ${file.getName()} is too large (${Math.round(fileSize/1024/1024)}MB). Skipping.`);
+      Logger.log(`File ${file.getName()} is too large (${fileSizeMB}MB). Maximum size is ${MAX_FILE_SIZE_MB}MB. Skipping.`);
       return;
     }
     
@@ -295,7 +308,6 @@ function _organizeFile(file, folderListString) {
       Utilities.sleep(MIN_API_CALL_SPACING_MS);
     }
     
-    // Safely get file content
     let fileBlob, bytes, base64Data;
     try {
       fileBlob = file.getBlob();
@@ -308,8 +320,7 @@ function _organizeFile(file, folderListString) {
     
     const mimeType = fileBlob.getContentType();
     const originalFilename = file.getName();
-    const currentDate = new Date().toLocaleDateString('en-CA');
-
+    
     const prompt = `Analyze the content of the attached file (MIME type: ${mimeType}). The original filename is "${originalFilename}".
 
 TASKS:
@@ -319,6 +330,7 @@ TASKS:
 Available Folders: ${folderListString}
 
 Respond ONLY with a minified JSON object using exact keys "newFilename" and "destinationFolder".`;
+    
     const requestBody = { "contents": [{ "parts": [{ "text": prompt }, { "inline_data": { "mime_type": mimeType, "data": base64Data } }] }] };
     const requestOptions = { 'method': 'post', 'contentType': 'application/json', 'payload': JSON.stringify(requestBody), 'muteHttpExceptions': true };
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-06-17:generateContent?key=${apiKey}`;
