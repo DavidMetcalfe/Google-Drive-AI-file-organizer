@@ -65,6 +65,12 @@ const MAX_RUNTIME_SECONDS = 240;               // Seconds before chaining folder
 const FOLDER_CACHE_REFRESH_HOURS = 24;         // How often to refresh folder structure
 const FOLDER_BATCH_SIZE = 100;                 // Folders processed per batch during scan
 
+// --- Folder Blacklisting ---
+const BLACKLISTED_PATHS = [                   // Folders to exclude from scanning
+  // "Photos",           // Excludes any folder named "Photos"
+  // "School/Highschool", // Excludes only "School/Highschool" path
+];
+
 // --- File Size Configuration ---
 const MAX_FILE_SIZE_MB = 18;                   // Maximum file size for processing
 
@@ -106,6 +112,35 @@ You can set longer intervals for folder structure rescanning by adjusting the `F
 - Set to `24` for daily refresh (default) - runs at midnight in your timezone
 - Set to `168` for weekly refresh - runs at midnight every 7 days
 - Any multiple of 24 will use the more efficient `everyDays()` trigger and run at midnight
+
+### Folder Blacklisting
+
+Exclude specific folders from being scanned and indexed by adding them to the `BLACKLISTED_PATHS` array. This feature supports two types of exclusions:
+
+#### Simple Folder Names
+Excludes any folder with the specified name, regardless of its location:
+```javascript
+const BLACKLISTED_PATHS = [
+  "Photos",    // Excludes all folders named "Photos"
+  "Archive",   // Excludes all folders named "Archive"
+];
+```
+
+#### Full Path Exclusions
+Excludes only folders at specific paths from the root:
+```javascript
+const BLACKLISTED_PATHS = [
+  "School/Highschool",  // Excludes only the "Highschool" folder within "School"
+  "Work/Personal",      // Excludes only the "Personal" folder within "Work"
+];
+```
+
+#### Benefits
+- **Faster Scanning**: Large folders like photo libraries or archives are skipped entirely
+- **Privacy**: Sensitive folders are never indexed or accessible to the AI
+- **Focused Organization**: Only relevant folders are considered for file placement
+
+**Note**: Blacklisted folders and all their subfolders are completely excluded from both scanning and as destination options for file organization.
 
 ### File Size Limits
 

@@ -46,6 +46,17 @@ const MAX_RUNTIME_SECONDS = 240; // Run for 4 minutes before chaining to the nex
 const FOLDER_CACHE_REFRESH_HOURS = 24; // How often to rescan the entire folder structure.
 const FOLDER_BATCH_SIZE = 100; // Process this many folders per continuation before checking runtime
 
+// --- Folder Blacklisting ---
+// Folders to exclude from scanning and indexing. Supports both folder names and full paths:
+// - Simple folder name: "Photos" (excludes any folder named "Photos" and all its children)
+// - Full path from root: "School/Highschool" (excludes only the "Highschool" folder within "School")
+const BLACKLISTED_PATHS = [
+  // Examples (remove or modify as needed):
+  // "Photos",           // Excludes any folder named "Photos"
+  // "School/Highschool", // Excludes only "School/Highschool" path
+  // "Archive",          // Excludes any folder named "Archive"
+];
+
 // --- File Size Configuration ---
 const MAX_FILE_SIZE_MB = 18; // Maximum size for files (limit of Gemini's API with inline content) over the inline limit
 
@@ -251,6 +262,14 @@ function continueFolderScan() {
       const folderId = folderStack.pop();
       const parentFolder = DriveApp.getFolderById(folderId);
       const currentPath = _getFolderPath(parentFolder);
+      
+      // Check if this folder is blacklisted
+      if (_isFolderBlacklisted(parentFolder, currentPath)) {
+        // Skip this folder and all its children
+        Logger.log(`Skipping blacklisted folder: ${currentPath}`);
+        foldersProcessed++;
+        continue;
+      }
       
       if (currentPath && currentPath !== "/") {
           foundPaths.push(currentPath);
@@ -673,4 +692,35 @@ function _getFolderPath(folder) {
         current = parent;
     }
     return `/${path.join('/')}`;
+}
+
+/**
+ * Checks if a folder should be blacklisted based on the BLACKLISTED_PATHS configuration.
+ * Supports both simple folder names and full paths from root.
+ * @param {Folder} folder - The Google Drive folder to check
+ * @param {string} folderPath - The full path of the folder (optional, will be computed if not provided)
+ * @returns {boolean} - True if the folder should be excluded
+ */
+function _isFolderBlacklisted(folder, folderPath) {
+    if (BLACKLISTED_PATHS.length === 0) return false;
+    
+    const folderName = folder.getName();
+    const fullPath = folderPath || _getFolderPath(folder);
+    
+    // Remove leading slash for comparison
+    const cleanPath = fullPath ? fullPath.substring(1) : '';
+    
+    for (const blacklistedItem of BLACKLISTED_PATHS) {
+        // Check if it's a simple folder name match
+        if (folderName === blacklistedItem) {
+            return true;
+        }
+        
+        // Check if it's a full path match (exact match or starts with blacklisted path)
+        if (cleanPath === blacklistedItem || cleanPath.startsWith(blacklistedItem + '/')) {
+            return true;
+        }
+    }
+    
+    return false;
 }
