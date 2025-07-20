@@ -102,9 +102,9 @@ Once configured, the script runs automatically:
 ### Custom Folder Refresh Intervals
 
 You can set longer intervals for folder structure rescanning by adjusting the `FOLDER_CACHE_REFRESH_HOURS` constant:
-- Set to `24` for daily refresh (default)
-- Set to `168` for weekly refresh
-- Any multiple of 24 will use the more efficient `everyDays()` trigger
+- Set to `24` for daily refresh (default) - runs at midnight in your timezone
+- Set to `168` for weekly refresh - runs at midnight every 7 days
+- Any multiple of 24 will use the more efficient `everyDays()` trigger and run at midnight
 
 ### File Size Limits
 
