@@ -44,6 +44,7 @@ const SOURCE_FOLDER_NAME = "Scanned content";
 const BATCH_SIZE = 5; // Process up to 5 files per run to avoid timeouts.
 const MAX_RUNTIME_SECONDS = 240; // Run for 4 minutes before chaining to the next execution.
 const FOLDER_CACHE_REFRESH_HOURS = 24; // How often to rescan the entire folder structure.
+const FOLDER_BATCH_SIZE = 100; // Process this many folders per continuation before checking runtime
 
 // --- File Size Configuration ---
 const MAX_FILE_SIZE_MB = 18; // Maximum size for files (limit of Gemini's API with inline content) over the inline limit
@@ -128,6 +129,87 @@ function createCacheTrigger() {
   triggerBuilder.create();
 }
 
+/**
+ * -----------------------------------------------------------------------------
+ * DEBUGGING & MANUAL RESET FUNCTIONS
+ * -----------------------------------------------------------------------------
+ */
+
+/**
+ * Debug function to check current scan state - run this if scans seem stuck
+ */
+function DEBUG_CHECK_SCAN_STATE() {
+  const properties = PropertiesService.getScriptProperties();
+  const scanInProgress = properties.getProperty('scanState_inProgress');
+  const scanStartTime = properties.getProperty('scanState_startTime');
+  const tempTriggerId = properties.getProperty('scanState_tempTriggerId');
+  const folderStack = properties.getProperty('scanState_folderStack');
+  const foundPaths = properties.getProperty('scanState_foundPaths');
+  const folderCache = properties.getProperty('folderCache');
+  const cacheTimestamp = properties.getProperty('folderCacheTimestamp');
+  
+  Logger.log('=== SCAN STATE DEBUG INFO ===');
+  Logger.log(`Scan in progress: ${scanInProgress}`);
+  
+  if (scanStartTime) {
+    const startTime = new Date(parseInt(scanStartTime));
+    const elapsedMinutes = Math.round((new Date().getTime() - parseInt(scanStartTime)) / (1000 * 60));
+    Logger.log(`Scan start time: ${startTime.toLocaleString()} (${elapsedMinutes} minutes ago)`);
+  }
+  
+  Logger.log(`Continuation trigger ID: ${tempTriggerId || 'None'}`);
+  
+  if (folderStack) {
+    const stack = JSON.parse(folderStack);
+    Logger.log(`Folders remaining in stack: ${stack.length}`);
+  }
+  
+  if (foundPaths) {
+    const paths = JSON.parse(foundPaths);
+    Logger.log(`Paths found so far: ${paths.length}`);
+  }
+  
+  Logger.log(`Cached folders: ${folderCache ? JSON.parse(folderCache).length : 'No cache'}`);
+  Logger.log(`Cache timestamp: ${cacheTimestamp || 'No timestamp'}`);
+  
+  // Check for active triggers
+  const activeTriggers = ScriptApp.getProjectTriggers();
+  Logger.log(`Active triggers: ${activeTriggers.length}`);
+  activeTriggers.forEach(trigger => {
+    Logger.log(`  - ${trigger.getHandlerFunction()} (${trigger.getEventType()}) - ID: ${trigger.getUniqueId()}`);
+  });
+  
+  Logger.log('=== END DEBUG INFO ===');
+}
+
+/**
+ * Manual reset function - use this if scan state gets stuck
+ */
+function MANUAL_RESET_SCAN_STATE() {
+  const properties = PropertiesService.getScriptProperties();
+  
+  Logger.log('Manually resetting scan state...');
+  
+  // Clean up all scan-related properties
+  properties.deleteProperty('scanState_inProgress');
+  properties.deleteProperty('scanState_startTime');
+  properties.deleteProperty('scanState_folderStack');
+  properties.deleteProperty('scanState_foundPaths');
+  properties.deleteProperty('scanState_tempTriggerId');
+  
+  // Clean up any continuation triggers
+  _deleteContinuationTrigger();
+  
+  // Also clean up any stray continuation triggers
+  ScriptApp.getProjectTriggers().forEach(trigger => {
+    if (trigger.getHandlerFunction() === 'continueFolderScan') {
+      ScriptApp.deleteTrigger(trigger);
+      Logger.log(`Deleted stray continuation trigger: ${trigger.getUniqueId()}`);
+    }
+  });
+  
+  Logger.log('Scan state reset complete. File processing should resume on next trigger.');
+}
 
 /**
  * -----------------------------------------------------------------------------
@@ -145,7 +227,8 @@ function startFolderScan() {
   properties.setProperties({
     'scanState_folderStack': JSON.stringify([DriveApp.getRootFolder().getId()]),
     'scanState_foundPaths': JSON.stringify([]),
-    'scanState_inProgress': 'true'
+    'scanState_inProgress': 'true',
+    'scanState_startTime': new Date().getTime().toString()
   }, true);
   Logger.log("Folder scan started. Kicking off first continuation.");
   continueFolderScan();
@@ -162,6 +245,7 @@ function continueFolderScan() {
   try {
     let folderStack = JSON.parse(properties.getProperty('scanState_folderStack'));
     let foundPaths = JSON.parse(properties.getProperty('scanState_foundPaths'));
+    let foldersProcessed = 0;
 
     while (folderStack.length > 0) {
       const folderId = folderStack.pop();
@@ -180,13 +264,19 @@ function continueFolderScan() {
         }
       }
 
-      const elapsedTime = (new Date() - startTime) / 1000;
-      if (elapsedTime > MAX_RUNTIME_SECONDS) {
-        properties.setProperty('scanState_folderStack', JSON.stringify(folderStack));
-        properties.setProperty('scanState_foundPaths', JSON.stringify(foundPaths));
-        _createContinuationTrigger();
-        Logger.log(`Scan paused due to time limit. ${folderStack.length} folders remain. Will continue shortly.`);
-        return;
+      foldersProcessed++;
+      
+      // Check time limit only after processing a batch of folders (more efficient)
+      if (foldersProcessed >= FOLDER_BATCH_SIZE) {
+        const elapsedTime = (new Date() - startTime) / 1000;
+        if (elapsedTime > MAX_RUNTIME_SECONDS) {
+          properties.setProperty('scanState_folderStack', JSON.stringify(folderStack));
+          properties.setProperty('scanState_foundPaths', JSON.stringify(foundPaths));
+          _createContinuationTrigger();
+          Logger.log(`Scan paused due to time limit. Processed ${foldersProcessed} folders this run, ${folderStack.length} remain.`);
+          return;
+        }
+        foldersProcessed = 0; // Reset batch counter
       }
     }
 
@@ -194,12 +284,16 @@ function continueFolderScan() {
     properties.setProperty('folderCache', JSON.stringify(foundPaths));
     properties.setProperty('folderCacheTimestamp', new Date().toUTCString());
     properties.deleteProperty('scanState_inProgress'); // Mark scan as complete
+    properties.deleteProperty('scanState_startTime');
+    properties.deleteProperty('scanState_tempTriggerId');
     _deleteContinuationTrigger();
     Logger.log(`Folder scan complete. Successfully cached ${foundPaths.length} folders.`);
 
   } catch (e) {
     Logger.log(`Error during continueFolderScan: ${e.toString()}.`);
     properties.deleteProperty('scanState_inProgress');
+    properties.deleteProperty('scanState_startTime');
+    properties.deleteProperty('scanState_tempTriggerId');
     _deleteContinuationTrigger();
   }
 }
@@ -211,9 +305,42 @@ function continueFolderScan() {
  */
 
 function scanFolderAndProcessFiles() {
-  if (PropertiesService.getScriptProperties().getProperty('scanState_inProgress') === 'true') {
-    Logger.log("Folder scan is currently in progress. Skipping file processing run to use complete data later.");
-    return;
+  const properties = PropertiesService.getScriptProperties();
+  const scanInProgress = properties.getProperty('scanState_inProgress');
+  
+  if (scanInProgress === 'true') {
+    // Check if scan might be stuck (no continuation trigger activity for 30+ minutes)
+    const scanStartTime = properties.getProperty('scanState_startTime');
+    const currentTime = new Date().getTime();
+    const thirtyMinutes = 30 * 60 * 1000;
+    
+    if (scanStartTime && (currentTime - parseInt(scanStartTime)) > thirtyMinutes) {
+      // Check if there are any continuation triggers still active
+      const tempTriggerId = properties.getProperty('scanState_tempTriggerId');
+      let activeTriggerFound = false;
+      
+      if (tempTriggerId) {
+        ScriptApp.getProjectTriggers().forEach(trigger => {
+          if (trigger.getUniqueId() === tempTriggerId) {
+            activeTriggerFound = true;
+          }
+        });
+      }
+      
+      if (!activeTriggerFound) {
+        Logger.log("Warning: Scan appears stuck (30+ minutes, no active continuation trigger). Resetting scan state.");
+        properties.deleteProperty('scanState_inProgress');
+        properties.deleteProperty('scanState_startTime');
+        properties.deleteProperty('scanState_tempTriggerId');
+        // Continue with file processing
+      } else {
+        Logger.log("Folder scan is in progress with active continuation trigger. Skipping file processing.");
+        return;
+      }
+    } else {
+      Logger.log("Folder scan is currently in progress. Skipping file processing run to use complete data later.");
+      return;
+    }
   }
 
   const lock = LockService.getScriptLock();

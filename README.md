@@ -63,6 +63,7 @@ const SOURCE_FOLDER_NAME = "Scanned content";  // Where you'll drop files to org
 const BATCH_SIZE = 5;                          // Files processed per run
 const MAX_RUNTIME_SECONDS = 240;               // Seconds before chaining folder scan
 const FOLDER_CACHE_REFRESH_HOURS = 24;         // How often to refresh folder structure
+const FOLDER_BATCH_SIZE = 100;                 // Folders processed per batch during scan
 
 // --- File Size Configuration ---
 const MAX_FILE_SIZE_MB = 18;                   // Maximum file size for processing
@@ -141,6 +142,24 @@ The script validates destination paths before moving files, ensuring that if a s
 3. **Files stuck in source folder**:
    - Wait for the folder scan to complete (especially on first run)
    - Check logs for API errors or rate limiting issues
+
+4. **"Folder scan is currently in progress" but no progress**:
+   - This indicates a stuck scan state
+   - Run `DEBUG_CHECK_SCAN_STATE()` to diagnose the issue
+   - If scan is stuck, run `MANUAL_RESET_SCAN_STATE()` to reset
+
+### Debug Functions
+
+The script includes built-in debugging functions accessible from the Apps Script editor:
+
+- **`DEBUG_CHECK_SCAN_STATE()`**: Shows current scan status, timing, active triggers, and folder counts
+- **`MANUAL_RESET_SCAN_STATE()`**: Force reset if scan state gets stuck (emergency use)
+
+To run these:
+1. Open your Apps Script editor
+2. Select the function from the dropdown menu
+3. Click the "Run" button ▶️
+4. Check the execution log for detailed information
 
 ### Execution Logs
 
