@@ -35,7 +35,7 @@
  * 3.  **Run Setup**: Select `SETUP_SCRIPT_AND_AUTHORIZE` from the function menu and click "▶ Run".
  *     This saves your key, creates triggers, and starts the first folder scan.
  *
- * @version 2.3
+ * @version 2.4
  * @OnlyCurrentDoc
  */
 
@@ -49,7 +49,11 @@ const FOLDER_CACHE_REFRESH_HOURS = 24; // How often to rescan the entire folder 
 const MAX_FILE_SIZE_MB = 18; // Maximum size for files (limit of Gemini's API with inline content) over the inline limit
 
 // --- API Configuration ---
+const AI_PLATFORM = "GEMINI";                     // Options: "GEMINI", "OPENAI"
+const GEMINI_MODEL = "gemini-2.5-flash-lite-preview-06-17"; // Google Gemini model to use
 const GEMINI_API_KEY = "PASTE_YOUR_GEMINI_API_KEY_HERE"; // Your Gemini API key
+const OPENAI_API_KEY = "PASTE_YOUR_OPENAI_API_KEY_HERE"; // Your OpenAI API key (if using OPENAI)
+const OPENAI_MODEL = "gpt-4.1-nano";                // OpenAI model to use
 
 /**
  * -----------------------------------------------------------------------------
@@ -60,6 +64,7 @@ const GEMINI_API_KEY = "PASTE_YOUR_GEMINI_API_KEY_HERE"; // Your Gemini API key
 function SETUP_SCRIPT_AND_AUTHORIZE() {
   Logger.log("--- Starting Full Script Setup ---");
   MANUALLY_SET_API_KEY();
+  MANUALLY_SET_OPENAI_API_KEY();
   createFileProcessingTrigger();
   createCacheTrigger();
   Logger.log("--- Starting initial folder scan. This may take several chained executions to complete... ---");
@@ -83,6 +88,19 @@ function MANUALLY_SET_API_KEY() {
 /**
  * Creates the time-based trigger for processing files every 10 minutes.
  */
+function MANUALLY_SET_OPENAI_API_KEY() {
+  if (OPENAI_API_KEY === "PASTE_YOUR_OPENAI_API_KEY_HERE" || !OPENAI_API_KEY) {
+    Logger.log("OpenAI API Key not provided. Please update the OPENAI_API_KEY constant and run SETUP_SCRIPT_AND_AUTHORIZE again.");
+    return;
+  }
+  try {
+    PropertiesService.getUserProperties().setProperty('OPENAI_API_KEY', OPENAI_API_KEY);
+    Logger.log(`Success: OpenAI API Key saved.`);
+  } catch (e) {
+    Logger.log(`Error saving OpenAI API key: ${e.toString()}`);
+  }
+}
+
 function createFileProcessingTrigger() {
   _createMinuteTrigger('scanFolderAndProcessFiles', 10);
 }
@@ -95,12 +113,13 @@ function createCacheTrigger() {
   _deleteTrigger(functionName);
 
   const triggerBuilder = ScriptApp.newTrigger(functionName).timeBased();
+  const userTimezone = Session.getScriptTimeZone();
 
   // Use everyDays() for intervals of 24 hours or more that are clean multiples of 24.
   if (FOLDER_CACHE_REFRESH_HOURS >= 24 && FOLDER_CACHE_REFRESH_HOURS % 24 === 0) {
     const days = FOLDER_CACHE_REFRESH_HOURS / 24;
-    triggerBuilder.everyDays(days);
-    Logger.log(`Success: Trigger for '${functionName}' has been created to run every ${days} day(s).`);
+    triggerBuilder.everyDays(days).atHour(0); // Run at midnight in user's timezone
+    Logger.log(`Success: Trigger for '${functionName}' has been created to run every ${days} day(s) at midnight (${userTimezone}).`);
   } else {
     triggerBuilder.everyHours(FOLDER_CACHE_REFRESH_HOURS);
     Logger.log(`Success: Trigger for '${functionName}' has been created to run every ${FOLDER_CACHE_REFRESH_HOURS} hours.`);
@@ -296,7 +315,14 @@ function _organizeFile(file, folderListString) {
     }
     
     // Use stored API key (not the constant, in case it was changed after setup)
-    const apiKey = PropertiesService.getUserProperties().getProperty('GEMINI_API_KEY');
+    let apiKey;
+    if (AI_PLATFORM === "GEMINI") {
+      apiKey = PropertiesService.getUserProperties().getProperty('GEMINI_API_KEY');
+    } else if (AI_PLATFORM === "OPENAI") {
+      apiKey = PropertiesService.getUserProperties().getProperty('OPENAI_API_KEY');
+    } else {
+      throw new Error(`Unsupported AI_PLATFORM: ${AI_PLATFORM}`);
+    }
     if (!apiKey) throw new Error("API key not found. Please run SETUP_SCRIPT_AND_AUTHORIZE first.");
 
     // Rate limiting
@@ -331,12 +357,29 @@ Available Folders: ${folderListString}
 
 Respond ONLY with a minified JSON object using exact keys "newFilename" and "destinationFolder".`;
     
-    const requestBody = { "contents": [{ "parts": [{ "text": prompt }, { "inline_data": { "mime_type": mimeType, "data": base64Data } }] }] };
-    const requestOptions = { 'method': 'post', 'contentType': 'application/json', 'payload': JSON.stringify(requestBody), 'muteHttpExceptions': true };
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-06-17:generateContent?key=${apiKey}`;
-    
-    // Make API call with detailed logging
-    const response = UrlFetchApp.fetch(apiUrl, requestOptions);
+        let response;
+    if (AI_PLATFORM === "GEMINI") {
+      const requestBody = { "contents": [{ "parts": [{ "text": prompt }, { "inline_data": { "mime_type": mimeType, "data": base64Data } }] }] };
+      const requestOptions = { 'method': 'post', 'contentType': 'application/json', 'payload': JSON.stringify(requestBody), 'muteHttpExceptions': true };
+      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+      response = UrlFetchApp.fetch(apiUrl, requestOptions);
+    } else if (AI_PLATFORM === "OPENAI") {
+      const chatRequest = {
+        model: OPENAI_MODEL,
+        messages: [{ role: "user", content: `${prompt}\n\n[BASE64_ENCODED_FILE_CONTENT]\n${base64Data}` }]
+      };
+      const requestOptions = {
+        method: 'post',
+        contentType: 'application/json',
+        headers: { Authorization: `Bearer ${apiKey}` },
+        payload: JSON.stringify(chatRequest),
+        muteHttpExceptions: true
+      };
+      const apiUrl = "https://api.openai.com/v1/chat/completions";
+      response = UrlFetchApp.fetch(apiUrl, requestOptions);
+    } else {
+      throw new Error(`Unsupported AI_PLATFORM: ${AI_PLATFORM}`);
+    }
     properties.setProperty('lastApiCallTime', new Date().getTime().toString());
     
     const responseCode = response.getResponseCode();
@@ -351,26 +394,35 @@ Respond ONLY with a minified JSON object using exact keys "newFilename" and "des
     const responseText = response.getContentText();
     Logger.log(`Response snippet: ${responseText.substring(0, 100)}...`);
     
-    // Parse response with better error handling
+        // Parse response with better error handling
     let jsonResponse, resultText, result;
     try {
       jsonResponse = JSON.parse(responseText);
-      
-      if (!jsonResponse.candidates || 
-          !jsonResponse.candidates[0] || 
-          !jsonResponse.candidates[0].content || 
-          !jsonResponse.candidates[0].content.parts || 
-          !jsonResponse.candidates[0].content.parts[0] || 
-          !jsonResponse.candidates[0].content.parts[0].text) {
-        throw new Error(`Invalid response structure: ${JSON.stringify(jsonResponse).substring(0, 200)}...`);
+
+      if (AI_PLATFORM === "GEMINI") {
+        if (!jsonResponse.candidates || 
+            !jsonResponse.candidates[0] || 
+            !jsonResponse.candidates[0].content || 
+            !jsonResponse.candidates[0].content.parts || 
+            !jsonResponse.candidates[0].content.parts[0] || 
+            !jsonResponse.candidates[0].content.parts[0].text) {
+          throw new Error(`Invalid response structure: ${JSON.stringify(jsonResponse).substring(0, 200)}...`);
+        }
+        resultText = jsonResponse.candidates[0].content.parts[0].text;
+      } else if (AI_PLATFORM === "OPENAI") {
+        if (!jsonResponse.choices || !jsonResponse.choices[0] || !jsonResponse.choices[0].message || !jsonResponse.choices[0].message.content) {
+          throw new Error(`Invalid response structure from OpenAI: ${JSON.stringify(jsonResponse).substring(0,200)}...`);
+        }
+        resultText = jsonResponse.choices[0].message.content;
+      } else {
+        throw new Error(`Unsupported AI_PLATFORM: ${AI_PLATFORM}`);
       }
-      
-      resultText = jsonResponse.candidates[0].content.parts[0].text;
+
       const cleanedJsonString = resultText.replace(/```json|```/g, '').trim();
       result = JSON.parse(cleanedJsonString);
-      
+
       if (!result.newFilename || !result.destinationFolder) {
-        throw new Error(`Missing required fields in Gemini response: ${cleanedJsonString.substring(0, 100)}...`);
+        throw new Error(`Missing required fields in response: ${cleanedJsonString.substring(0, 100)}...`);
       }
     } catch (jsonError) {
       Logger.log(`JSON parsing error: ${jsonError}. Raw response: ${resultText ? resultText.substring(0, 200) : 'undefined'}...`);
