@@ -42,9 +42,9 @@
 // --- Global Configuration ---
 const SOURCE_FOLDER_NAME = "Scanned content";
 const BATCH_SIZE = 5; // Process up to 5 files per run to avoid timeouts.
-const MAX_RUNTIME_SECONDS = 240; // Run for 4 minutes before chaining to the next execution.
+const MAX_RUNTIME_SECONDS = 300; // Run for 5 minutes before chaining to the next execution.
 const FOLDER_CACHE_REFRESH_HOURS = 24; // How often to rescan the entire folder structure.
-const FOLDER_BATCH_SIZE = 100; // Process this many folders per continuation before checking runtime
+const FOLDER_BATCH_SIZE = 250; // Process this many folders per continuation before checking runtime
 
 // --- Folder Blacklisting ---
 // Folders to exclude from scanning and indexing. Supports both folder names and full paths:
@@ -86,14 +86,14 @@ function SETUP_SCRIPT_AND_AUTHORIZE() {
 
 function MANUALLY_SET_API_KEY() {
   if (GEMINI_API_KEY === "PASTE_YOUR_GEMINI_API_KEY_HERE" || !GEMINI_API_KEY) {
-    Logger.log("API Key not provided. Please update the GEMINI_API_KEY constant and run SETUP_SCRIPT_AND_AUTHORIZE again.");
+    Logger.log("Gemini API Key not provided. Please update the GEMINI_API_KEY constant and run SETUP_SCRIPT_AND_AUTHORIZE again.");
     return;
   }
   try {
     PropertiesService.getUserProperties().setProperty('GEMINI_API_KEY', GEMINI_API_KEY);
-    Logger.log(`Success: API Key saved.`);
+    Logger.log(`Success: Gemini API Key saved.`);
   } catch (e) {
-    Logger.log(`Error saving API key: ${e.toString()}`);
+    Logger.log(`Error saving Gemini API key: ${e.toString()}`);
   }
 }
 
@@ -102,7 +102,7 @@ function MANUALLY_SET_API_KEY() {
  */
 function MANUALLY_SET_OPENAI_API_KEY() {
   if (OPENAI_API_KEY === "PASTE_YOUR_OPENAI_API_KEY_HERE" || !OPENAI_API_KEY) {
-    Logger.log("OpenAI API Key not provided. Please update the OPENAI_API_KEY constant and run SETUP_SCRIPT_AND_AUTHORIZE again.");
+    Logger.log("OpenAI API Key not provided. To use OpenAI instead of Gemini, please update the OPENAI_API_KEY constant and run SETUP_SCRIPT_AND_AUTHORIZE again.");
     return;
   }
   try {
@@ -191,6 +191,32 @@ function DEBUG_CHECK_SCAN_STATE() {
   });
   
   Logger.log('=== END DEBUG INFO ===');
+}
+
+/**
+ * Clean up duplicate continuation triggers while preserving scan progress
+ */
+function CLEANUP_DUPLICATE_TRIGGERS() {
+  Logger.log('Cleaning up duplicate continuation triggers...');
+  
+  const properties = PropertiesService.getScriptProperties();
+  const validTriggerId = properties.getProperty('scanState_tempTriggerId');
+  let cleanedCount = 0;
+  
+  ScriptApp.getProjectTriggers().forEach(trigger => {
+    if (trigger.getHandlerFunction() === 'continueFolderScan') {
+      // Keep the valid trigger, delete others
+      if (trigger.getUniqueId() !== validTriggerId) {
+        ScriptApp.deleteTrigger(trigger);
+        cleanedCount++;
+        Logger.log(`Deleted duplicate continuation trigger: ${trigger.getUniqueId()}`);
+      } else {
+        Logger.log(`Kept valid continuation trigger: ${trigger.getUniqueId()}`);
+      }
+    }
+  });
+  
+  Logger.log(`Cleanup complete. Removed ${cleanedCount} duplicate trigger(s).`);
 }
 
 /**
